@@ -6,6 +6,8 @@ import datetime
 import re
 import argparse
 import sys
+import signal
+import socket
 
 ###This script monitors the output of the PFE level command "show route manager statistics" for FIB changes
 
@@ -24,6 +26,7 @@ def parse_route_manager_stats(stats_dict,route_manager_output):
     for i in tables:
         stats_dict[i]['raw'] = []
 
+    ###The metrics we're interested in from the output of 'show route manager statistics'
     for line in route_manager_output.splitlines():
         if 'IPv4 Statistics:' in line:
             key = 'ipv4'
@@ -55,7 +58,7 @@ def load_stats_dict(stats_dict):
                     if stats_dict[key]['stats'].has_key(metric):
                         stats_dict[key]['stats'][delta_metric] = int(val) - int(stats_dict[key]['stats'][metric])
                     stats_dict[key]['stats'][metric] = val
-                    
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -63,36 +66,46 @@ def main():
     parser.add_argument("--user", help="username")
     parser.add_argument("--password", help="password")
     parser.add_argument("--interval", default=3, help="interval to run monitoring")
-    
+    parser.add_argument("--holddown", default=180, help="time that a device must not exist in a converging state before calculating total elapsed convergence time") 
+    parser.add_argument("--test_id", help="Identifier for the test being performed")
     args = parser.parse_args()
-    if args.device and args.user and args.password and args.interval:
-        print "###Running on device "+args.device+" as user "+args.user+" with an interval of "+str(args.interval)+" seconds###"
-        
+    if args.device and args.user and args.password and args.interval and args.test_id:
+        hostname = socket.gethostbyname(args.device)
+        print "###Running on device "+args.device+" as user "+args.user+" with an interval of "+str(args.interval)+" seconds and minimum holddown of "+str(args.holddown)+" ###"
         iterations = 0
         interval = float(args.interval)
+        ###Initialize the dictionary for storing output values gathered from the devices
         for i in tables:
             stats_dict[i] = {}
             stats_dict[i]['raw'] = []
             stats_dict[i]['stats'] = {}
 
-        with Device(host=args.device, port=22,username=args.user,password=args.password) as dev:
+        with Device(host=hostname, port=22,username=args.user,password=args.password) as dev:
             dev_shell = StartShell(dev)
             dev_shell.open()
             last_mutation_count = 0   
+            initial_convergence_timestamp = None
+            most_recent_convergence_timestamp = None
             while(True):
                 route_manager = dev_shell.run('cprod -A fpc0 -c "show route manager statistics"')
+                ###Capture the current timestamp
+                timestamp = datetime.datetime.utcnow()
                 stats = route_manager[1]
                 if "Permission denied" in stats:
                     print "Permission to execute cprod command failed"
                     sys.exit(0)
-                
+                ###Parse the output of show route manager statistics and load into the stats dictionary
                 parse_route_manager_stats(stats_dict,stats)
+                ###Sort the stats dictionary
                 load_stats_dict(stats_dict)
-                timestamp = datetime.datetime.utcnow() 
-                
+                ###Determine if any mutations have occurred - if so, then a convergence is occurring
+                log_prefix = str(timestamp) + " device: "+args.device+" test_id: "+args.test_id+" "
                 if last_mutation_count != stats_dict['total_mutations']:
                     if iterations > 0:
-                        print str(timestamp) + " Convergence on "+args.device+" is occurring - total FIB mutations: "+str(stats_dict['total_mutations'])
+                        print log_prefix + "Convergence occurring - total FIB mutations since last change: "+str(stats_dict['total_mutations'] - last_mutation_count)
+                        most_recent_convergence_timestamp = timestamp
+                        if initial_convergence_timestamp is None:
+                            initial_convergence_timestamp = timestamp
                         for table in tables:
                             for key in stats_dict[table]['stats']:
                                 for metric in metrics:
@@ -100,14 +113,18 @@ def main():
                                     if metric == key:
                                         if int(stats_dict[table]['stats'][delta_metric]) > 0:
                                             print "   "+str(timestamp)+" "+table+" "+metric +" "+ str(stats_dict[table]['stats'][delta_metric])
-                           
+
                     last_mutation_count = stats_dict['total_mutations']
                     stats_dict['total_mutations'] = 0
-                
+                ###No convergence has occurred since mutations are the same since the most recent iteration, determine if holddown has expired
                 else:
-                    print str(timestamp) + " No convergence on "+args.device+" is occurring - total FIB mutations: "+str(stats_dict['total_mutations'])
-                
-                
+                    if initial_convergence_timestamp is not None:
+                        time_delta = most_recent_convergence_timestamp + datetime.timedelta(seconds=int(args.holddown))
+                        if timestamp >= (time_delta):
+                           print log_prefix+" Total time spent in a converging state: "+str(most_recent_convergence_timestamp - initial_convergence_timestamp)
+                           initial_convergence_timestamp = None
+
+
                 iterations += 1 
                 sleep(interval)
     else:
