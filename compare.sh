@@ -1,19 +1,19 @@
 #!/bin/bash
 
 ###Directories
-#public_dir='/home/ra1n/OC_Analysis/public/yang'
-public_dir='/home/ra1n/openconfig/public/'
-juniper_dir='/home/ra1n/OC_Analysis/juniper/yang'
-relevant_models='/home/ra1n/OC_Analysis/relevant_models'
-git_dir='/home/ra1n/openconfig/public/'
+#public_dir='/home/user/OC_Analysis/public/yang'
+public_dir='/home/user/openconfig/public/'
+juniper_dir='/home/user/OC_Analysis/juniper/yang'
+relevant_models='/home/user/OC_Analysis/relevant_models'
+git_dir='/home/user/openconfig/public/'
 
 ###Colors
 RED='\033[0;31m'
-GREEN='\033[0;32m'
+REEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RESET='\033[0m'
 
-###Read in only relevant models for Balvenie
+###Read in only relevant models
 declare -a relevant_models_array=(
 "openconfig-aaa.yang"
 "openconfig-acl.yang"
@@ -120,7 +120,7 @@ echo "filename,present_in_junos,pristine_copy,common_commit,public_version,junip
 for filename in $(find $public_dir -name '*.yang'); do 
 		public_file=`basename $filename`
 		public_file_version=$(cat $filename | grep openconfig-version | awk '{ print $2 }' | sed 's/;//g')
-		repo_file=$(echo $filename | sed 's/\/home\/ra1n\/openconfig\/public//g' | sed 's/^.//')
+		repo_file=$(echo $filename | sed 's/\/home\/user\/openconfig\/public//g' | sed 's/^.//')
 		public_file_hash=`sha1sum $filename | awk '{ print $1 }'`
 		found=0
 		if [[ " ${relevant_models_array[*]} " =~ " ${public_file} " ]]; then
